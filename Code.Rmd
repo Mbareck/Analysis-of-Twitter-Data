@@ -1,0 +1,266 @@
+---
+title: "Ann Coulter's Twitter Mining"
+author: "Mohamed"
+date: "March 8, 2019"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE, tidy = TRUE)
+```
+##Let's load necessary libraries
+```{r }
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(tidytext)
+library(stringr)
+library(kableExtra)
+library(knitr)
+library(tm)
+
+```
+#Load the Coulter tweets
+```{r}
+Coulter <- rio::import("Coulter.csv")
+```
+## Calculating tweets by month
+```{r}
+Coulter_y_Month <- Coulter %>%
+  mutate(created_at = ymd_hms(created_at)) %>%
+  mutate(yearmon= format(created_at, "%Y-%m")) %>%
+  group_by(yearmon) %>%
+  count(yearmon)
+Coulter_y_Month
+```
+## Now plot the tweets by year/month
+```{r}
+ggplot(Coulter_y_Month)+
+  aes(x = yearmon, y = n, fill =yearmon) +
+  theme_bw()+
+  geom_col(show.legend = FALSE) +
+  labs( y = "Tweets", x = "Year/Month",
+        title = "Ann Coulter Twitter Activity",
+        caption = "Source: Twitter, 2018") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5))
+```
+## Let's tokenize and clean Coulter's tweets
+```{r}
+reg <- "([^A-Za-z\\d#@']|'(?![A-Za-z\\d#@]))"
+tidy_tweets  <- Coulter %>%
+    filter(!str_detect(text, '^"')) %>%
+    mutate(text = str_replace_all(text, "https://t.co/[A-Za-z\\d]+|&amp;", "")) %>%
+    unnest_tokens(word, text, token = "regex", pattern = reg) %>%
+    filter(!word %in% stop_words$word, str_detect(word, "[a-z]"))
+# it is important to stem the words for a better aggregation
+stemWord <- tidy_tweets$word #this will work as dictioinary for stemming
+```
+## Check your sterm words
+```{r}
+stemWord[1:10]
+```
+## After tokenizing the tweets and creating a stem completion dictionary, 
+## repeat the count again and apply stemcompletion
+```{r}
+tidy_tweets  <- Coulter %>%
+  filter(!str_detect(text, '^"')) %>%
+  mutate(text = str_replace_all(text, "https://t.co/[A-Za-z\\d]+|&amp;", "")) %>%
+  unnest_tokens(word, text, token = "regex", pattern = reg) %>%
+  filter(!word %in% stop_words$word, str_detect(word, "[a-z]")) %>%
+  mutate(word = stemDocument(word)) 
+```
+## Check the the stemmed words in Coulter's tweets
+```{r}
+tidy_tweets$word[1:10]
+```
+# Now apply stem dictionary on the words, keeping the shortest form of each word
+```{r}
+tidy_tweets  <- Coulter %>%
+  filter(!str_detect(text, '^"')) %>%
+  mutate(text = str_replace_all(text, "https://t.co/[A-Za-z\\d]+|&amp;", "")) %>%
+  unnest_tokens(word, text, token = "regex", pattern = reg) %>%
+  filter(!word %in% stop_words$word, str_detect(word, "[a-z]")) %>%
+  mutate(word = stemDocument(word)) %>% # here we stem the words
+  mutate(word = stemCompletion(word, dictionary = stemWord, type = "shortest"))
+```
+## Check the the words in Coulter's tweets after stemcompletion
+```{r}
+tidy_tweets$word[1:10]
+```
+#--------------------------------------------------------#
+#             calculate common words                      
+#--------------------------------------------------------#
+```{r}
+words <- tidy_tweets %>%
+  count(word, sort = T) %>%
+  filter(!str_detect(word, "^@|ha")) %>% 
+  # by this line, I excluded user mentions, 
+  #as well as "ha ha ha" because they are not actually words.
+  top_n(20) %>% # top 15
+  arrange(desc(n))
+
+words
+```
+## plot top words
+```{r}
+ggplot(words, aes(x = reorder(word, -n), y = n, fill = word))  +
+  geom_bar(stat = "identity", show.legend = F) +
+  coord_flip() +
+  labs(title = "Top Words In Ann Coulter's Twitter Feed", 
+       subtitle = "Ann Coulter Twitter Feed",
+       caption = "Source: Twitter 2019",
+       x="Word",
+       y="Count of the word usage") +
+  theme_bw()
+```
+
+# ----------------------------Analysis------------------#
+#-------------------------------------------------------#
+
+#Couler Twitter activity increased significantly in October and November
+# wwhat was she tweeting about in during this period
+```{r}
+remove_reg <- "&amp;|&lt;|&gt;"
+OctNov <- Coulter %>%
+  filter(!str_detect(text, "^RT")) %>%
+  mutate(text = str_remove_all(text, remove_reg)) %>%
+  unnest_tokens(word, text, token = "tweets") %>%
+  filter(!word %in% stop_words$word,
+         !word %in% str_remove_all(stop_words$word, "'"),
+         str_detect(word, "[a-z]")) %>%
+  mutate(created_at = month(created_at, label = T)) %>%
+  filter(created_at == c("Oct", "Nov")) %>%
+  group_by(created_at) %>%
+  count(word, sort = T) %>%
+  top_n(10) %>%
+  arrange(desc(n))
+```
+#plot
+```{r}
+ggplot(OctNov)+
+  aes(x = reorder(word,-n), y= n, fill= created_at)+
+  geom_col(position = "dodge")+
+  theme_bw()+
+  coord_flip()+
+  labs(
+    title = "Ann Coulter top Subjects During October/Novemebr",
+    y = "Count",
+    x  = "word",
+    legend = "Month"
+  )
+```
+
+```{r}
+# how often does she retweet others?
+#retweet count VS actual tweets
+ggplot(Coulter)+
+  aes(x = is_retweet, fill = is_retweet)+
+  geom_histogram(stat = "count", show.legend = F)+
+  theme_bw()+
+  labs(title = "Ann Coulter Tweets vs retweets", 
+       subtitle = "Ann Coulter Twitter Feed",
+       caption = "Source: Twitter 2019",
+       x="Retweets",
+       y="Tweets") 
+```
+
+```{r}
+# how much engagement (likes) does she get over time?
+# favourtie count
+Fav <- Coulter %>%
+  select(screen_name, favorite_count, created_at) %>%
+  filter(favorite_count > 0) %>%
+  mutate(created_at = ymd_hms(created_at)) %>%
+  mutate(yearmon= format(created_at, "%Y-%m")) %>%
+  group_by(yearmon) %>%
+  arrange(desc(favorite_count))
+```
+##plot 
+```{r}
+ggplot(Fav)+
+  aes(x = yearmon, y = favorite_count, fill = yearmon)+
+  geom_col(show.legend = F) +
+  theme_bw()+
+  labs(title = "Ann Coulter Tweeter engagement", 
+       subtitle = "Ann Coulter Twitter Feed",
+       caption = "Source: Twitter 2019",
+       x="Year/Month",
+       y="Tweets Favorites") 
+
+```
+#------------------Measuring the engagement----------------------#
+#----------------------------------------------------------------#
+```{r}
+# this code shows people and entities that coulter comment on the most on Twitter
+quotes <- Coulter %>%
+  count(quoted_name, sort = T) %>%
+  na.exclude() %>%
+  top_n(20)
+ggplot(quotes)+
+  aes(x = reorder(quoted_name,-n), y = n, fill = quoted_name)+
+  geom_col(show.legend = F) +
+  coord_flip()+
+  labs(title = "Ann Coulter Quoted Sources", 
+       subtitle = "Ann Coulter Twitter Feed",
+       caption = "Source: Twitter 2019",
+       x="Quoted Name",
+       y="Count") 
+```
+
+```{r}
+# This code shows us who is engaging her in their conversations, soupposing she relpies to those who mention her on Twitter
+
+engagement1 <- Coulter %>%
+  count(reply_to_screen_name)%>%
+  arrange(reply_to_screen_name)
+```
+
+```{r}
+mentions <- Coulter %>%
+  count(mentions_screen_name, sort = T) %>%
+  arrange(desc(n)) %>%
+  na.exclude() %>%
+  top_n(10)
+ggplot(mentions)+
+  aes(x = reorder(mentions_screen_name, -n), y = n, fill = mentions_screen_name)+
+  geom_col(show.legend = F)+
+  theme_bw()+
+  coord_flip()+
+  labs(title = "Coulter's Most Common Name Mentions on Twitter", y = "Count", x = "Name"  )
+```
+
+```{r}
+# This code shows  how many times Coulter's Tweets whave been liked by others
+
+engagement2 <- Coulter %>%
+  select(favorite_count, created_at) %>%
+  filter(favorite_count >0) %>%
+  mutate(created_at = ymd_hms(created_at)) %>%
+  mutate(yearmon= format(created_at, "%Y-%m")) %>%
+  group_by(yearmon) %>%
+  arrange(favorite_count)
+ggplot(engagement2)+
+  aes(x = yearmon, y = favorite_count, fill= yearmon)+
+  geom_col(show.legend = F)+
+  labs(title = "Times Coulter's Tweets whave been liked by Ohers")
+```
+
+```{r}
+# This code shows many time Coulter's Tweets have been retweeted by others
+
+engagement3 <- Coulter %>%
+  select(retweet_count, created_at) %>%
+  mutate(created_at = ymd_hms(created_at)) %>%
+  mutate(yearmon= format(created_at, "%Y-%m")) %>%
+  group_by(yearmon) %>%
+  arrange(retweet_count)
+ggplot(engagement3)+
+  aes(x = yearmon, y = retweet_count, fill= yearmon)+
+  geom_col(show.legend = F)+
+  labs(title = "Coulter's Retweets Count")
+
+```
+
